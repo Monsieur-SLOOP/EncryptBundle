@@ -1,35 +1,26 @@
 <?php
 
-namespace SpecShaper\EncryptBundle\Subscribers;
+namespace SpecShaper\EncryptBundle\Listeners;
 
-use Doctrine\Bundle\DoctrineBundle\EventSubscriber\EventSubscriberInterface;
-use Doctrine\Common\Annotations\Reader;
-use Doctrine\Common\EventSubscriber;
+use Doctrine\Bundle\DoctrineBundle\Attribute\AsDoctrineListener;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
+use Doctrine\ORM\Event\PostLoadEventArgs;
 use Doctrine\ORM\Events;
 use Doctrine\Persistence\Event\LifecycleEventArgs;
 use ReflectionProperty;
 use SpecShaper\EncryptBundle\Annotations\Encrypted;
 use SpecShaper\EncryptBundle\Encryptors\EncryptorInterface;
 use SpecShaper\EncryptBundle\Exception\EncryptException;
-use Psr\Log\LoggerInterface;
 
 /**
- * Doctrine event subscriber which encrypt/decrypt entities.
+ * Doctrine event listener which encrypt/decrypt entities.
  */
-class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEncryptSubscriberInterface
+#[AsDoctrineListener(event: Events::onFlush)]
+#[AsDoctrineListener(event: Events::postLoad)]
+#[AsDoctrineListener(event: Events::postUpdate)]
+class DoctrineEncryptListener
 {
-    /**
-     * Encryptor interface namespace.
-     */
-    public const ENCRYPTOR_INTERFACE_NS = EncryptorInterface::class;
-
-    /**
-     * An array of annotations which are to be encrypted.
-     * The default and initial is the bundle Encrypted Class.
-     */
-    protected array $annotationArray;
 
     /**
      * Caches information on an entity's encrypted fields in an array keyed on
@@ -42,13 +33,10 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
     private bool $isDisabled;
 
     public function __construct(
-        private readonly LoggerInterface $logger,
-        private readonly Reader $annReader,
         private readonly EncryptorInterface $encryptor,
-        array $annotationArray,
-        bool $isDisabled
-    ) {
-        $this->annotationArray = $annotationArray;
+        bool                                $isDisabled
+    )
+    {
         $this->isDisabled = $isDisabled;
     }
 
@@ -63,25 +51,10 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
      * Used to programmatically disable encryption on flush operations.
      * Decryption still occurs if values have the <ENC> suffix.
      */
-    public function setIsDisabled(?bool $isDisabled = true): DoctrineEncryptSubscriberInterface
+    public function setIsDisabled(?bool $isDisabled = true): DoctrineEncryptListener
     {
         $this->isDisabled = $isDisabled;
-
         return $this;
-    }
-
-    /**
-     * Realization of EventSubscriber interface method.
-     *
-     * @return array Return all events which this subscriber is listening
-     */
-    public function getSubscribedEvents(): array
-    {
-        return [
-            Events::postLoad,
-            Events::postUpdate,
-            Events::onFlush,
-        ];
     }
 
     /**
@@ -89,13 +62,13 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
      */
     public function onFlush(OnFlushEventArgs $args): void
     {
+
         if ($this->isDisabled) {
             return;
         }
 
         $em = $args->getObjectManager();
         $unitOfWork = $em->getUnitOfWork();
-
         foreach ($unitOfWork->getScheduledEntityInsertions() as $entity) {
             $this->processFields($entity, $em, true, true);
         }
@@ -112,11 +85,13 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
      * @throws EncryptException
      */
     public function postLoad(LifecycleEventArgs $args): void
+//    public function postLoad(postLoadEventArgs $args): void
     {
         $entity = $args->getObject();
         // Decrypt the entity fields.
         $this->processFields($entity, $args->getObjectManager(), false, false);
     }
+
 
     /**
      * Decrypt a value.
@@ -170,7 +145,7 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
             }
 
             if (is_object($value)) {
-                throw new EncryptException('Cannot encrypt an object at '.$refProperty->class.':'.$refProperty->getName(), $value);
+                throw new EncryptException('Cannot encrypt an object at ' . $refProperty->class . ':' . $refProperty->getName(), $value);
             }
 
             // Encryption is fired by onFlush event, else it is an onLoad event.
@@ -200,7 +175,7 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
             // Restore the decrypted values after the change set update
             foreach ($this->rawValues[$oid] as $prop => $rawValue) {
                 $refProperty = $meta->getReflectionProperty($prop);
-                $refProperty->setValue($entity, $rawValue);
+                $refProperty?->setValue($entity, $rawValue);
             }
             unset($this->rawValues[$oid]);
         }
@@ -219,7 +194,7 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
             $meta = $em->getClassMetadata($className);
             foreach ($this->rawValues[$oid] as $prop => $rawValue) {
                 $refProperty = $meta->getReflectionProperty($prop);
-                $refProperty->setValue($entity, $rawValue);
+                $refProperty?->setValue($entity, $rawValue);
             }
 
             unset($this->rawValues[$oid]);
@@ -252,27 +227,14 @@ class DoctrineEncryptSubscriber implements EventSubscriberInterface, DoctrineEnc
         return $encryptedFields;
     }
 
-    private function isEncryptedProperty(ReflectionProperty $refProperty)
+    private function isEncryptedProperty(ReflectionProperty $refProperty): bool
     {
         // If PHP8, and has attributes.
-        if(method_exists($refProperty, 'getAttributes')) {
+        if (method_exists($refProperty, 'getAttributes')) {
             foreach ($refProperty->getAttributes() as $refAttribute) {
-                if (in_array($refAttribute->getName(), $this->annotationArray)) {
+                if (str_contains($refAttribute->getName(), 'Encrypted')) {
                     return true;
                 }
-            }
-        }
-
-        foreach ($this->annReader->getPropertyAnnotations($refProperty) as $key => $annotation) {
-            if (in_array(get_class($annotation), $this->annotationArray)) {
-                $refProperty->setAccessible(true);
-
-                $this->logger->debug(sprintf('Use of @Encrypted property from SpecShaper/EncryptBundle in property %s is deprectated.
-                    Please use #[Encrypted] attribute instead.',
-                    $refProperty
-                ));
-
-                return true;
             }
         }
 

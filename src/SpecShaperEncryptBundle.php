@@ -6,8 +6,8 @@ namespace SpecShaper\EncryptBundle;
 
 use SpecShaper\EncryptBundle\Annotations\Encrypted;
 use SpecShaper\EncryptBundle\Encryptors\OpenSslEncryptor;
-use SpecShaper\EncryptBundle\Subscribers\DoctrineEncryptSubscriber;
-use SpecShaper\EncryptBundle\Subscribers\EncryptEventSubscriber;
+use SpecShaper\EncryptBundle\Listeners\EncryptEventListener;
+use SpecShaper\EncryptBundle\Listeners\DoctrineEncryptListener;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
@@ -28,7 +28,7 @@ class SpecShaperEncryptBundle extends AbstractBundle
             ->children()
                 ->scalarNode('encrypt_key')->end()
                 ->scalarNode('method')->defaultValue('OpenSSL')->end()
-                ->scalarNode('subscriber_class')->defaultValue(DoctrineEncryptSubscriber::class)->end()
+                ->scalarNode('subscriber_class')->defaultValue(DoctrineEncryptListener::class)->end()
                 ->scalarNode('encryptor_class')->defaultValue(OpenSslEncryptor::class)->end()
                 ->scalarNode('is_disabled')->defaultValue(false)->end()
                 ->arrayNode('connections')
@@ -74,7 +74,7 @@ class SpecShaperEncryptBundle extends AbstractBundle
             ->arg('$isDisabled', $config['is_disabled'])
         ;
 
-        $encryptEventSubscriber = $services->set(EncryptEventSubscriber::class)
+        $encryptEventSubscriber = $services->set(EncryptEventListener::class)
             ->autowire(true)
             ->arg('$isDisabled', $config['is_disabled'])
         ;

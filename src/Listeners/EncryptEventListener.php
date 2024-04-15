@@ -1,16 +1,15 @@
 <?php
 
-namespace SpecShaper\EncryptBundle\Subscribers;
+namespace SpecShaper\EncryptBundle\Listeners;
 
+use Doctrine\Bundle\DoctrineBundle\Attribute\AsDoctrineListener;
+use Doctrine\ORM\Events;
 use SpecShaper\EncryptBundle\Encryptors\EncryptorInterface;
 use SpecShaper\EncryptBundle\Event\EncryptEventInterface;
 use SpecShaper\EncryptBundle\Event\EncryptEvents;
-use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
-/**
- * Doctrine event subscriber which encrypt/decrypt entities.
- */
-class EncryptEventSubscriber implements EventSubscriberInterface
+
+class EncryptEventListener
 {
     /**
      * Encryptor created by the factory service.
@@ -25,7 +24,8 @@ class EncryptEventSubscriber implements EventSubscriberInterface
     /**
      * EncryptSubscriber constructor.
      *
-     * @param $isDisabled
+     * @param EncryptorInterface $encryptor
+     * @param bool $isDisabled
      */
     public function __construct(EncryptorInterface $encryptor, bool $isDisabled)
     {

@@ -7,6 +7,7 @@ namespace SpecShaper\EncryptBundle\Encryptors;
  */
 interface EncryptorInterface
 {
+    public const ENCRYPTED_SUFFIX = '<ENC>';
     public function setSecretKey(string $key): void;
 
     /**
