@@ -7,7 +7,6 @@ namespace SpecShaper\EncryptBundle\Encryptors;
  */
 interface EncryptorInterface
 {
-    public const ENCRYPTED_SUFFIX = '<ENC>';
     public function setSecretKey(string $key): void;
 
     /**
@@ -17,7 +16,7 @@ interface EncryptorInterface
      *
      * @return string|null Encrypted string
      */
-    public function encrypt(?string $data): ?string;
+    public function encrypt(?string $data, ?string $columnName): ?string;
 
     /**
      * Must accept data and return decrypted data.
@@ -26,5 +25,5 @@ interface EncryptorInterface
      *
      * @return string Unencrypted string
      */
-    public function decrypt(?string $data): ?string;
+    public function decrypt(?string $data, ?string $columnName): ?string;
 }

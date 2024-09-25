@@ -2,22 +2,22 @@
 
 namespace SpecShaper\EncryptBundle\Command;
 
-use Doctrine\Migrations\Query\Query;
 use Doctrine\ORM\Mapping\ClassMetadata;
 use Doctrine\Persistence\ManagerRegistry;
-use Doctrine\Persistence\Reflection\RuntimeReflectionProperty;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Command\Command;
-use SpecShaper\EncryptBundle\Exception\EncryptException;
 use SpecShaper\EncryptBundle\Encryptors\EncryptorInterface;
 use Doctrine\ORM\EntityManagerInterface;
-use Doctrine\Common\Annotations\Reader;
+//use Doctrine\Common\Annotations\Reader;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+/**
+ * bin/console encrypt:database decrypt --manager=default
+ */
 #[AsCommand(
     name: 'encrypt:database',
     description: 'Encrypts or Decrypts the database'
@@ -25,13 +25,12 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 class EncryptDatabaseCommand extends Command
 {
 
-    private array $encryptedFields = [];
+    private ?EntityManagerInterface $em;
 
-    private $plannedSql = [];
+    private array $encryptedFields = [];
 
     public function __construct(
 //        private readonly Reader $annotationReader,
-        private EntityManagerInterface $em,
         private readonly EncryptorInterface $encryptor,
         private readonly ManagerRegistry $registry,
         private readonly array $annotationArray
@@ -52,14 +51,15 @@ class EncryptDatabaseCommand extends Command
         $io = new SymfonyStyle($input, $output);
 
         $direction = $input->getArgument('direction');
-//        $managerName = $this->registry->getDefaultManagerName();
+        $managerName = $this->registry->getDefaultManagerName();
 
-//        $managerNameOption = $input->getOption('manager');
+        $managerNameOption = $input->getOption('manager');
 
-//        if(!empty($managerNameOption)) {
-//            $managerName = $managerNameOption;
-//        }
-//        $this->em = $this->registry->getManager($managerName);
+        if(!empty($managerNameOption)) {
+            $managerName = $managerNameOption;
+        }
+
+        $this->em = $this->registry->getManager($managerName);
 
         $this->getEncryptedFields();
 
@@ -71,55 +71,49 @@ class EncryptDatabaseCommand extends Command
 
         $io->progressStart($tables);
 
-        foreach ($this->encryptedFields as $entityName => $fieldArray){
-            $this->decryptTable($entityName, $fieldArray, $direction);
+        foreach ($this->encryptedFields as $tableName => $fieldArray){
+
+            $this->decryptTable($tableName, $fieldArray, $direction);
             $io->progressAdvance();
         }
 
-        $io->progressFinish($tables);
+        $io->progressFinish();
 
         return Command::SUCCESS;
     }
 
-    private function decryptTable(string $tableName, array $fieldArray, string $direction){
-
-        $statement = '';
-
+    private function decryptTable(string $tableName, array $fieldArray, string $direction): void
+    {
         // Get all the field names that have been encrypted as an array.
-        $select = array_keys($fieldArray);
-
         // Convert those to comma seperated string like lastname, firstname.
-        $select = implode(', ', $select);
-        $selectQuery = sprintf('SELECT id, %s FROM %s', $select, $tableName);
+        $fields = implode(', ', $fieldArray);
+
+        $selectQuery = sprintf('SELECT id, %s FROM %s', $fields, $tableName);
 
         // Fetch these encrypted rows
-        $encryptedEntityFields = $this->em->getConnection()->fetchAllAssociative($selectQuery);
+        $resultRows = $this->em->getConnection()->fetchAllAssociative($selectQuery);
 
-        foreach ($encryptedEntityFields as $entity) {
+        $decryptedFields = [];
 
-            $sql = 'UPDATE ' . $tableName . ' SET ';
+        foreach($resultRows as $resultRow)
+        {
+            foreach ($resultRow as $fieldName => $value) {
 
-            $decryptedFields = [];
-            foreach($fieldArray as $fieldName => $refProperty){
-
-                if('encrypt' === $direction) {
-                    $newValue = $this->encryptor->encrypt($entity[$fieldName]);
-                } else {
-                    $newValue = $this->encryptor->decrypt($entity[$fieldName]);
+                if('id' === $fieldName){
+                    continue;
                 }
 
-                $decryptedFields[] = $fieldName . ' = "' . $newValue . '"';
+                if ('encrypt' === $direction) {
+                    $newValue = $this->encryptor->encrypt($value);
+                } else {
+                    $newValue = $this->encryptor->decrypt($value);
+                }
+
+                $decryptedFields[$fieldName] = $newValue;
             }
 
-            $sql .= implode( ', ', $decryptedFields);
-
-            $sql .= ' WHERE id = ' . $entity['id'] . ';';
-
-            $statement .= $sql;
-
+            $this->em->getConnection()->update($tableName, $decryptedFields, ['id' => $resultRow['id']]);
         }
-
-        $this->em->getConnection()->executeStatement($statement);
     }
 
     private function getEncryptedFields(): array
@@ -135,18 +129,24 @@ class EncryptDatabaseCommand extends Command
                 continue;
             }
 
+            $reflectionClass = new \ReflectionClass($entityMeta->getName());
+
+            $properties = $reflectionClass->getProperties();
+
             $tableName = $entityMeta->getTableName();
 
+            $classMeta = $this->em->getClassMetadata($entityMeta->getName());
 
-            if (isset($this->encryptedFields[$tableName])) {
-                return $this->encryptedFields[$tableName];
-            }
+            foreach ($properties as $key => $refProperty) {
 
-            $meta = $this->em->getClassMetadata($entityMeta->getName());
-
-            foreach ($meta->getReflectionProperties() as $key => $refProperty) {
                 if ($this->isEncryptedProperty($refProperty)) {
-                    $this->encryptedFields[$tableName][$key] = $refProperty;
+
+                    if (!isset($this->encryptedFields[$tableName])) {
+                        $this->encryptedFields[$tableName] = [];
+                    }
+
+                    $columnName = $classMeta->getColumnName($key);
+                    $this->encryptedFields[$tableName][$columnName] = $refProperty->getName();
                 }
             }
         }
@@ -154,16 +154,18 @@ class EncryptDatabaseCommand extends Command
         return $this->encryptedFields;
     }
 
-    private function isEncryptedProperty(RuntimeReflectionProperty $refProperty)
+    private function isEncryptedProperty(\ReflectionProperty $refProperty)
     {
 
         foreach ($refProperty->getAttributes() as $refAttribute) {
+
             if (in_array($refAttribute->getName(), $this->annotationArray)) {
                 return true;
             }
         }
 
 //        foreach ($this->annotationReader->getPropertyAnnotations($refProperty) as $key => $annotation) {
+//
 //            if (in_array(get_class($annotation), $this->annotationArray)) {
 //                $refProperty->setAccessible(true);
 //
@@ -177,13 +179,5 @@ class EncryptDatabaseCommand extends Command
 //        }
 
         return false;
-    }
-
-    protected function addSql(
-        string $sql,
-        array $params = [],
-        array $types = []
-    ): void {
-        $this->plannedSql[] = new Query($sql, $params, $types);
     }
 }
